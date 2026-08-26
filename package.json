@@ -1,0 +1,37 @@
+{
+  "name": "ccattention",
+  "version": "0.1.0",
+  "description": "How much of your attention did Claude Code actually cost? Utterances per session, self-correction rate, and how often you had to push back — from local transcripts.",
+  "bin": {
+    "ccattention": "bin/ccattention"
+  },
+  "scripts": {
+    "test": "python3 -c \"import ast,sys; ast.parse(open('bin/ccattention').read()); print('syntax ok')\" && ./bin/ccattention --days 1 >/dev/null && echo 'run ok'"
+  },
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "attention",
+    "friction",
+    "analytics",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "sue738",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sue738/ccattention.git"
+  },
+  "homepage": "https://github.com/sue738/ccattention#readme",
+  "bugs": {
+    "url": "https://github.com/sue738/ccattention/issues"
+  }
+}

@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""ccattention — 1日あたり、あなたの注意をどれだけ使ったか。
+
+効率の指標を私のツール数や稼働時間に置くと的を外す。あなたが実際に払っている
+費用は**打った回数**なので、それをセッションの本数で割って見る:
+
+  直近14日は 1582 発話 / 299 セッション = **1セッションあたり 5.3 発話**。
+
+以前は「90分空いたら次の用件」という時間ギャップで"用件"に割っていたが、閾値が
+答えを作ってしまっていた(1日中打ち続けた日は区切りが入らず239発話が"1用件"、
+逆に発話の少ない日は0用件で計算不能。30日実測でCV=1.15)。セッション単位なら
+チューニングパラメータが無く、同じ30日でCV=0.56、全日で算出できる。
+
+**ただし測れるようになった代わりに、問いが変わった。** 「1つの仕事を片付けるのに
+何回打つか」は測れていない — セッションは仕事の単位ではないので、1本で複数の
+話題を扱えば長く出るし、同じ話題を2本に分ければ短く出る。今出しているのは
+「1セッションが平均何往復か」。負担の指標としては自己訂正率・差し戻しの方が直接的。
+
+  ccattention              日別
+  ccattention --weekly     週別
+  ccattention --days N     期間
+  ccattention --json
+"""
+
+import collections
+import datetime
+import glob
+import json
+import os
+import re
+import sys
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+SKIP = ("Another Claude", "<", "Base directory", "This session is being continued",
+        "Stop hook", "Caveat", "# ")
+# ユーザーが打たずに済んだはずのもの。分類は粗いが、推移を見るには足りる。
+STATUS = re.compile(r"^(進んでる|動いてる|続けてる|終わった|進んだ|動ける|今何|今どんな|今止ま|まだ|どうなった)")
+APPROVE = re.compile(r"^(はい|うん|ok|OK|いいよ|いいです|やって|やろう|やりましょう|お願い"
+                     r"|進めて|続けて|そう|それで|このまま|着手|する|やる|了解|よろしく|[0-9a-c]$)")
+# 私が直前の自分の出力を否定した本文。品質の指標としてはこれが最も直接的で、
+# 実測では平常 1.7〜3.9% に対し、失敗が続いた日は 10.0% に跳ねた。
+SELFFIX = re.compile(r"訂正します|誤りでした|間違って|外れました|戻します|撤回"
+                     r"|私の(誤り|失敗|見落と)|信用できません|数え直|取り下げ|前提が崩れ")
+NUDGE = re.compile(r"(止まってる|また止ま|作りますと言って|言って(作業|実装)してない|続けて|なんで止)")
+
+
+def day(ts):
+    return ts[:10]
+
+
+def week(ts):
+    d = datetime.date.fromisoformat(ts[:10])
+    return (d - datetime.timedelta(days=d.weekday())).isoformat()
+
+
+def collect(days):
+    cut = (datetime.datetime.now(datetime.timezone.utc)
+           - datetime.timedelta(days=days)).isoformat()
+    rows = collections.defaultdict(lambda: {
+        "user": 0, "user_chars": 0, "mine": 0, "mine_chars": 0,
+        "status": 0, "approve": 0, "nudge": 0, "blocks": 0, "bursts": 0,
+        "threads": 0, "selffix": 0})
+    for f in glob.glob(PROJECTS + "/**/*.jsonl", recursive=True):
+        if os.sep + "subagents" + os.sep in f:
+            continue
+        try:
+            if os.path.getsize(f) > 200_000_000:
+                continue
+        except OSError:
+            continue
+        run = 0
+        last_ts = None
+        counted_days = set()
+        for line in open(f, errors="ignore"):
+            if '"user"' not in line and '"assistant"' not in line:
+                continue
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            ts = e.get("timestamp") or ""
+            if not ts or ts < cut:
+                continue
+            c = (e.get("message") or {}).get("content")
+            if e.get("type") == "user":
+                txt = c if isinstance(c, str) else next(
+                    (b.get("text", "") for b in (c or [])
+                     if isinstance(b, dict) and b.get("type") == "text"), "")
+                if not txt or not txt.strip():
+                    continue
+                s = txt.strip()
+                # フックが差し戻した回数は、その本文が戻ってくることで分かる
+                if s.startswith("Stop hook"):
+                    if last_ts:
+                        rows[last_ts]["blocks"] += 1
+                    continue
+                if s.startswith(SKIP) or len(s) > 600:
+                    continue
+                r = rows[ts]
+                last_ts = ts
+                # 用件の単位 = 「その日に実際に話したセッション」(1ファイル=1セッション)。
+                #
+                # 以前は「前の発話から90分空いたら新しい用件」という時間ギャップ
+                # だったが、実測で破綻していた: 1日中打ち続けた日は区切りが一度も
+                # 入らず239発話が"1用件"になり、逆に発話の少ない日は0用件で計算
+                # 不能になる(30日実測でCV=1.15、範囲1.5〜239、31日中29日しか出ない)。
+                # 閾値は観測ではなく仮定なので、仮定が答えを作ってしまっていた。
+                #
+                # セッション単位にするとチューニングパラメータが消えて観測事実
+                # だけになる(同じ30日でCV=0.56、範囲3.0〜50、31日すべてで算出可)。
+                # 限界は正直に: 1セッションで複数の話題を扱えば用件を過小に数える。
+                # ただし「無い区切りを発明する」ことはしない方を選ぶ。
+                d_ = ts[:10]
+                if d_ not in counted_days:
+                    counted_days.add(d_)
+                    r["threads"] += 1
+                if run >= 4:
+                    r["bursts"] += 1
+                run = 0
+                r["user"] += 1
+                r["user_chars"] += len(s)
+                if STATUS.match(s):
+                    r["status"] += 1
+                elif NUDGE.search(s):
+                    r["nudge"] += 1
+                elif len(s) <= 15 and APPROVE.match(s):
+                    r["approve"] += 1
+            elif e.get("type") == "assistant" and isinstance(c, list):
+                tx = [b.get("text", "") for b in c
+                      if isinstance(b, dict) and b.get("type") == "text" and b.get("text", "").strip()]
+                if tx and last_ts:
+                    rows[last_ts]["mine"] += 1
+                    rows[last_ts]["mine_chars"] += len(tx[-1])
+                    if SELFFIX.search(tx[-1]):
+                        rows[last_ts]["selffix"] += 1
+                    run += 1
+    return rows
+
+
+def fold(rows, keyfn):
+    out = collections.defaultdict(lambda: collections.Counter())
+    for ts, v in rows.items():
+        k = keyfn(ts)
+        for kk, vv in v.items():
+            out[k][kk] += vv
+    return dict(sorted(out.items()))
+
+
+def main():
+    argv = sys.argv[1:]
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    days = int(argv[argv.index("--days") + 1]) if "--days" in argv else 21
+    rows = collect(days)
+    folded = fold(rows, week if "--weekly" in argv else day)
+    if "--json" in argv:
+        print(json.dumps({k: dict(v) for k, v in folded.items()}, ensure_ascii=False, indent=2))
+        return 0
+    if not folded:
+        print("該当する期間のデータがありません")
+        return 0
+    print(f"{'期間':<12}{'ｾｯｼｮﾝ':>5}{'あなた':>7}{'発話/ｾｯｼｮﾝ':>10}"
+          f"{'私の通数':>8}{'通/発話':>8}{'読む分':>7}{'自己訂正':>8}{'状況確認':>7}{'催促':>5}{'差戻':>5}")
+    for k, v in folded.items():
+        u = max(v["user"], 1)
+        th = max(v["threads"], 1)
+        print(f"{k:<12}{v['threads']:>5}{v['user']:>7}{v['user']/th:>10.1f}"
+              f"{v['mine']:>8}{v['mine']/u:>8.1f}{v['mine_chars']/400:>7.0f}"
+              f"{v['selffix']/max(v['mine'],1)*100:>7.1f}%"
+              f"{v['status']:>7}{v['nudge']:>5}{v['blocks']:>5}")
+    print("\n  セッション = その日に実際に話した会話ウィンドウの数。実測基準値は 5.3 発話/セッション(直近14日)。")
+    print("  これはセッションの長さであって、仕事の重さではない — 仕事単位は測れていない。")
+    print("  負担そのものを見るなら自己訂正・差戻の列の方が直接的。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
