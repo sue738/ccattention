@@ -23,16 +23,16 @@ $ ccattention --days 7
 
 | column | meaning |
 |---|---|
-| ｾｯｼｮﾝ | conversations you actually spoke in that day |
-| あなた | your utterances (main loop only; subagents excluded) |
-| 発話/ｾｯｼｮﾝ | how long an average conversation ran |
-| 私の通数 / 通/発話 | how much the assistant said back, per turn |
-| 読む分 | rough minutes of assistant text you had to read |
-| 自己訂正 | share of assistant turns that walked back its own previous answer |
-| 状況確認 / 催促 | times you had to ask "is it running?" or "why did you stop?" |
-| 差戻 | times a Stop hook bounced the assistant back |
+| sess | conversations you actually spoke in that day |
+| you | your utterances (main loop only; subagents excluded) |
+| per sess | how long an average conversation ran |
+| mine / per utt | how much the assistant said back, per turn |
+| read min | rough minutes of assistant text you had to read |
+| selffix | share of assistant turns that walked back its own previous answer |
+| status / nudge | times you had to ask "is it running?" or "why did you stop?" |
+| block | times a Stop hook bounced the assistant back |
 
-## On the unit — read this before trusting 発話/ｾｯｼｮﾝ
+## On the unit — read this before trusting per sess
 
 An earlier version split the day into "用件" (tasks) using a 90-minute
 idle gap. That threshold produced the answer rather than measuring it: a day
@@ -55,6 +55,9 @@ segmentation, so lean on those when you want the friction itself.
 ```sh
 npm install -g ccattention
 ```
+
+Output is English by default; set `CCATTENTION_LANG=ja` (or run under a `ja`
+locale) for Japanese.
 
 **Requires `python3` on your PATH.** Unlike the sibling tools, this one is a
 single Python script rather than Node — npm is only being used to put it on

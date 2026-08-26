@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
-"""ccattention — 1日あたり、あなたの注意をどれだけ使ったか。
+"""ccattention - how much of your attention did Claude Code actually cost?
 
-効率の指標を私のツール数や稼働時間に置くと的を外す。あなたが実際に払っている
-費用は**打った回数**なので、それをセッションの本数で割って見る:
+Judging an assistant by its token count or its uptime misses what you actually
+spend. The cost you pay is **how many times you had to type**, so divide that
+by the number of conversations:
 
-  直近14日は 1582 発話 / 299 セッション = **1セッションあたり 5.3 発話**。
+  last 14 days: 1582 utterances / 299 sessions = **5.3 utterances per session**
 
-以前は「90分空いたら次の用件」という時間ギャップで"用件"に割っていたが、閾値が
-答えを作ってしまっていた(1日中打ち続けた日は区切りが入らず239発話が"1用件"、
-逆に発話の少ない日は0用件で計算不能。30日実測でCV=1.15)。セッション単位なら
-チューニングパラメータが無く、同じ30日でCV=0.56、全日で算出できる。
+An earlier version split the day into tasks using a 90-minute idle gap. That
+threshold produced the answer instead of measuring it: a day of continuous
+typing never crossed it, so 239 utterances collapsed into "one task"; a quiet
+day yielded zero tasks and the ratio was undefined (CV 1.15 over 30 days).
+Sessions have no tuning parameter -- same 30 days, CV 0.56, defined every day.
 
-**ただし測れるようになった代わりに、問いが変わった。** 「1つの仕事を片付けるのに
-何回打つか」は測れていない — セッションは仕事の単位ではないので、1本で複数の
-話題を扱えば長く出るし、同じ話題を2本に分ければ短く出る。今出しているのは
-「1セッションが平均何往復か」。負担の指標としては自己訂正率・差し戻しの方が直接的。
+**Being computable changed the question, though.** "How many turns to finish
+one job" is still not measured -- a session is not a unit of work, so one
+session covering three topics reads long. What is measured is session length.
+For the friction itself, read the self-correction and pushback columns.
 
-  ccattention              日別
-  ccattention --weekly     週別
-  ccattention --days N     期間
+  ccattention              by day
+  ccattention --weekly     by week
+  ccattention --days N     range
   ccattention --json
-"""
 
+Output is English by default; set CCATTENTION_LANG=ja (or a ja locale) for
+Japanese.
+"""
 import collections
 import datetime
 import glob
@@ -29,6 +33,19 @@ import json
 import os
 import re
 import sys
+
+# 兄弟ツール(ccflaky/ccskillstats/ccsendstats)と同じ規約: 英語が既定で、
+# CCATTENTION_LANG か ロケールが ja のときだけ日本語。npmで配る以上、
+# 既定が日本語だと大半の利用者が読めない(初見レビューで指摘)。
+JA = bool(re.match(r"^ja", os.environ.get("CCATTENTION_LANG")
+                   or os.environ.get("LC_ALL")
+                   or os.environ.get("LC_MESSAGES")
+                   or os.environ.get("LANG") or "", re.I))
+
+
+def L(en, ja):
+    return ja if JA else en
+
 
 PROJECTS = os.path.expanduser("~/.claude/projects")
 SKIP = ("Another Claude", "<", "Base directory", "This session is being continued",
@@ -151,6 +168,26 @@ def main():
     if "-h" in argv or "--help" in argv:
         print(__doc__)
         return 0
+    # 未知のフラグを黙って捨てると、typo(--dyas 3)が「全期間の集計」として
+    # 成功してしまい、間違ったデータを正しい答えだと思って読むことになる
+    # (初見レビューで実際に踏まれた)。知らないものは受け取らない。
+    known = {"--weekly", "--json", "--days", "-h", "--help"}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--days":
+            if i + 1 >= len(argv) or not argv[i + 1].lstrip("-").isdigit():
+                print(L("--days needs a number, e.g. --days 30",
+                        "--days には数値が必要です (例: --days 30)"), file=sys.stderr)
+                return 2
+            i += 2
+            continue
+        if a not in known:
+            print(L(f"unknown option: {a}", f"知らないオプション: {a}"), file=sys.stderr)
+            print(L("try --help", "--help を参照してください"), file=sys.stderr)
+            return 2
+        i += 1
+
     days = int(argv[argv.index("--days") + 1]) if "--days" in argv else 21
     rows = collect(days)
     folded = fold(rows, week if "--weekly" in argv else day)
@@ -158,20 +195,25 @@ def main():
         print(json.dumps({k: dict(v) for k, v in folded.items()}, ensure_ascii=False, indent=2))
         return 0
     if not folded:
-        print("該当する期間のデータがありません")
+        print(L("no data in that range", "該当する期間のデータがありません"))
         return 0
-    print(f"{'期間':<12}{'ｾｯｼｮﾝ':>5}{'あなた':>7}{'発話/ｾｯｼｮﾝ':>10}"
-          f"{'私の通数':>8}{'通/発話':>8}{'読む分':>7}{'自己訂正':>8}{'状況確認':>7}{'催促':>5}{'差戻':>5}")
+    print(f"{L('period','期間'):<12}{L('sess','ｾｯｼｮﾝ'):>6}{L('you','あなた'):>7}"
+          f"{L('per sess','発話/ｾｯｼｮﾝ'):>10}{L('mine','私の通数'):>8}{L('per utt','通/発話'):>8}"
+          f"{L('read min','読む分'):>9}{L('selffix','自己訂正'):>8}{L('status','状況確認'):>8}"
+          f"{L('nudge','催促'):>6}{L('block','差戻'):>6}")
     for k, v in folded.items():
         u = max(v["user"], 1)
         th = max(v["threads"], 1)
-        print(f"{k:<12}{v['threads']:>5}{v['user']:>7}{v['user']/th:>10.1f}"
-              f"{v['mine']:>8}{v['mine']/u:>8.1f}{v['mine_chars']/400:>7.0f}"
+        print(f"{k:<12}{v['threads']:>6}{v['user']:>7}{v['user']/th:>10.1f}"
+              f"{v['mine']:>8}{v['mine']/u:>8.1f}{v['mine_chars']/400:>9.0f}"
               f"{v['selffix']/max(v['mine'],1)*100:>7.1f}%"
-              f"{v['status']:>7}{v['nudge']:>5}{v['blocks']:>5}")
-    print("\n  セッション = その日に実際に話した会話ウィンドウの数。実測基準値は 5.3 発話/セッション(直近14日)。")
-    print("  これはセッションの長さであって、仕事の重さではない — 仕事単位は測れていない。")
-    print("  負担そのものを見るなら自己訂正・差戻の列の方が直接的。")
+              f"{v['status']:>8}{v['nudge']:>6}{v['blocks']:>6}")
+    print(L("\n  sess = conversations you actually spoke in that day. Baseline: 5.3 utterances/session (last 14 days).",
+            "\n  セッション = その日に実際に話した会話ウィンドウの数。実測基準値は 5.3 発話/セッション(直近14日)。"))
+    print(L("  That is conversation length, not how heavy the work was -- job-level effort is not measured here.",
+            "  これはセッションの長さであって、仕事の重さではない — 仕事単位は測れていない。"))
+    print(L("  For the friction itself, read the selffix and block columns.",
+            "  負担そのものを見るなら自己訂正・差戻の列の方が直接的。"))
     return 0
 
 

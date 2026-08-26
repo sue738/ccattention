@@ -1,6 +1,6 @@
 {
   "name": "ccattention",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "How much of your attention did Claude Code actually cost? Utterances per session, self-correction rate, and how often you had to push back — from local transcripts.",
   "bin": {
     "ccattention": "bin/ccattention"
