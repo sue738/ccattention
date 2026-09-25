@@ -61,12 +61,25 @@ SELFFIX = re.compile(r"訂正します|誤りでした|間違って|外れまし
 NUDGE = re.compile(r"(止まってる|また止ま|作りますと言って|言って(作業|実装)してない|続けて|なんで止)")
 
 
+def local_date(ts):
+    """The local calendar day of a transcript timestamp.
+
+    Timestamps are UTC ('...Z'). Slicing the string named the UTC day, so east
+    of UTC anything before the offset hour (09:00 in Tokyo) was counted under
+    the day before.
+    """
+    try:
+        return datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date()
+    except ValueError:
+        return datetime.date.fromisoformat(ts[:10])
+
+
 def day(ts):
-    return ts[:10]
+    return local_date(ts).isoformat()
 
 
 def week(ts):
-    d = datetime.date.fromisoformat(ts[:10])
+    d = local_date(ts)
     return (d - datetime.timedelta(days=d.weekday())).isoformat()
 
 
@@ -127,7 +140,7 @@ def collect(days):
                 # だけになる(同じ30日でCV=0.56、範囲3.0〜50、31日すべてで算出可)。
                 # 限界は正直に: 1セッションで複数の話題を扱えば用件を過小に数える。
                 # ただし「無い区切りを発明する」ことはしない方を選ぶ。
-                d_ = ts[:10]
+                d_ = day(ts)
                 if d_ not in counted_days:
                     counted_days.add(d_)
                     r["threads"] += 1

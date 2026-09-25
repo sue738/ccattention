@@ -6,7 +6,7 @@
     "ccattention": "bin/ccattention"
   },
   "scripts": {
-    "test": "python3 -c \"import ast,sys; ast.parse(open('bin/ccattention').read()); print('syntax ok')\" && ./bin/ccattention --days 1 >/dev/null && echo 'run ok'"
+    "test": "python3 test/test.py && python3 -c \"import ast,sys; ast.parse(open('bin/ccattention').read()); print('syntax ok')\" && ./bin/ccattention --days 1 >/dev/null && echo 'run ok'"
   },
   "files": [
     "bin",
