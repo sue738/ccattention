@@ -64,5 +64,16 @@ class LocalDays(Base):
         self.assertEqual(list(json.loads(r.stdout)), [monday])
 
 
+class BadDays(Base):
+    def test_non_positive_days_exit_2(self):
+        for v in ("-3", "0"):
+            r = run(self.home, "--days", v)
+            self.assertEqual(r.returncode, 2, f"--days {v}: {r.stdout}")
+            self.assertNotIn("no data", r.stdout)
+
+    def test_positive_days_pass(self):
+        self.assertEqual(run(self.home, "--days", "7").returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -189,9 +189,11 @@ def main():
     while i < len(argv):
         a = argv[i]
         if a == "--days":
-            if i + 1 >= len(argv) or not argv[i + 1].lstrip("-").isdigit():
-                print(L("--days needs a number, e.g. --days 30",
-                        "--days には数値が必要です (例: --days 30)"), file=sys.stderr)
+            # --days -3 used to pass (lstrip("-")) and put the cutoff in the
+            # future, which printed "no data in that range" as if it were true.
+            if i + 1 >= len(argv) or not argv[i + 1].isdigit() or int(argv[i + 1]) <= 0:
+                print(L("--days needs a positive number, e.g. --days 30",
+                        "--days には正の数が必要です (例: --days 30)"), file=sys.stderr)
                 return 2
             i += 2
             continue
