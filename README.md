@@ -19,6 +19,8 @@ $ ccattention --days 7
   負担そのものを見るなら自己訂正・差戻の列の方が直接的。
 ```
 
+> Also for Codex CLI, Gemini CLI and Cursor: [agstats](https://github.com/sue738/agstats) reads every agent's transcripts side by side (`npx agstats attention`).
+
 ## What each column means
 
 | column | meaning |
